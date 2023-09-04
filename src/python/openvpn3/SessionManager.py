@@ -114,7 +114,7 @@ class Session(object):
         self.__log_callback = None
         self.__status_callback = None
         self.__deleted = False
-        self.__LogForward_receiver_count = 0
+        self.__log_forward_enabled = False
 
 
     def __del__(self):
@@ -286,24 +286,20 @@ class Session(object):
     #
     def LogCallback(self, cbfnc):
         if cbfnc is not None:
-            # Remove the existing callback if there is one.
-            if self.__log_callback is not None:
-                self.LogCallback(None)
-
             self.__log_callback = cbfnc
             self.__dbuscon.add_signal_receiver(cbfnc,
                                                signal_name='Log',
                                                dbus_interface='net.openvpn.v3.backends',
                                                bus_name='net.openvpn.v3.log',
                                                path=self.__session_path)
-            self.__add_LogForward_receiver()
         else:
             # Only remove the callback if there actually *is* a callback
             # currently.
             if self.__log_callback is not None:
-                self.__remove_LogForward_receiver()
                 self.__dbuscon.remove_signal_receiver(self.__log_callback, 'Log')
                 self.__log_callback = None
+
+        self.__set_log_forward()
 
     ##
     #  Subscribes to the StatusChange signals for this session and register
@@ -314,26 +310,21 @@ class Session(object):
     #
     def StatusChangeCallback(self, cbfnc):
         if cbfnc is not None:
-            # Remove the existing callback if there is one.
-            if self.__status_callback is not None:
-                self.StatusChangeCallback(None)
-
             self.__status_callback = cbfnc
             self.__dbuscon.add_signal_receiver(cbfnc,
                                                signal_name='StatusChange',
                                                dbus_interface='net.openvpn.v3.backends',
                                                bus_name='net.openvpn.v3.log',
                                                path=self.__session_path)
-            self.__add_LogForward_receiver()
         else:
             # Only remove the callback if there actually *is* a callback
             # currently.
             if self.__status_callback is not None:
-                self.__remove_LogForward_receiver()
                 self.__dbuscon.remove_signal_receiver(self.__status_callback,
                                                       'StatusChange')
                 self.__status_callback = None
 
+        self.__set_log_forward()
 
 
     ##
@@ -430,32 +421,29 @@ class Session(object):
         self.__prop_intf.Set('net.openvpn.v3.sessions', 'dco', dco)
 
     ##
-    #  Internal method to increase the count of how many signal receivers need
-    #  LogForward. Turns on LogForward if this is the first receiver.
+    #  Internal method to enable/disable LogForward as needed.
+    #  Must be called whenever a callback that needs LogForward enabled is
+    #  added or removed.
     #
-    def __add_LogForward_receiver(self):
-        # This is our first need for LogForward. Turn it on.
-        if self.__LogForward_receiver_count == 0:
+    def __set_log_forward(self):
+        # The LogCallback and the StatusChangeCallback both need LogForward
+        # enabled. In other words, LogForward should be enabled iff one or both
+        # of those callbacks are registered.
+        should_log_forward_be_enabled = (
+            self.__log_callback is not None or self.__status_callback is not None
+        )
+
+        if should_log_forward_be_enabled and not self.__log_forward_enabled:
             self.__session_intf.LogForward(True)
-
-        self.__LogForward_receiver_count += 1
-
-    ##
-    #  Internal method track to reduce the count of how many signal receivers
-    #  need LogForward. Turns off LogForward if this was the last receiver.
-    #
-    def __remove_LogForward_receiver(self):
-        assert self.__LogForward_receiver_count > 0
-        self.__LogForward_receiver_count -= 1
-
-        # No receivers are left in need of LogForward. Turn it off.
-        if self.__LogForward_receiver_count == 0:
+            self.__log_forward_enabled = True
+        elif not should_log_forward_be_enabled and self.__log_forward_enabled:
             try:
                 self.__session_intf.LogForward(False)
             except dbus.exceptions.DBusException:
                 # If this fails, the session is typically already removed
                 pass
 
+            self.__log_forward_enabled = False
 
 
 ##
